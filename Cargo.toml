@@ -1,0 +1,11 @@
+[package]
+name = "priceholder"
+version = "0.1.0"
+edition = "2021"
+authors = ["Harry Scholes <harryscholes@users.noreply.github.com>"]
+description = "A threadsafe hashmap type that notifies waiters of state changes"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num = "0.4.0"
