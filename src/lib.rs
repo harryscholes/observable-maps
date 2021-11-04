@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::mpsc::{sync_channel, Receiver, RecvError, SendError, SyncSender};
 use std::sync::{Arc, Mutex};
 
-use num::Unsigned;
-
 pub trait PriceHolder<T> {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>>;
     fn get_price(&self, symbol: String) -> Option<T>;
@@ -30,7 +28,7 @@ impl<T> Default for ThreadUnsafe<T> {
 
 impl<T> PriceHolder<T> for ThreadUnsafe<T>
 where
-    T: Unsigned + Copy,
+    T: Copy,
 {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
         match self.hashmap.get_mut(&symbol) {
@@ -56,7 +54,7 @@ where
 
 impl<T> ThreadUnsafe<T>
 where
-    T: Unsigned + Copy,
+    T: Copy,
 {
     fn price_receiver(&mut self, symbol: String) -> Receiver<T> {
         let (tx, rx) = sync_channel(1);
@@ -93,7 +91,7 @@ impl<T> Default for ThreadSafe<T> {
 
 impl<T> PriceHolder<T> for ThreadSafe<T>
 where
-    T: Unsigned + Copy,
+    T: Copy,
 {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
         self.inner.lock().unwrap().put_price(symbol, value)
@@ -116,7 +114,7 @@ struct Price<T> {
 
 impl<T> Price<T>
 where
-    T: Unsigned + Copy,
+    T: Copy,
 {
     fn new() -> Self {
         Self {
@@ -160,6 +158,8 @@ mod tests {
     use super::*;
     use std::{sync::mpsc::RecvError, thread, time::Duration};
 
+    use rust_decimal_macros::dec;
+
     #[test]
     fn put_and_get_price() {
         let mut ph = ThreadUnsafe::new();
@@ -174,6 +174,30 @@ mod tests {
         assert_eq!(ph.get_price("another_symbol".to_string()).unwrap(), 3);
 
         assert!(ph.get_price("not_a_symbol".to_string()).is_none());
+    }
+
+    #[test]
+    fn price_holder_works_with_arbitrary_structs_that_are_copy() {
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        struct Tmp();
+
+        let mut ph = ThreadUnsafe::new();
+        ph.put_price("is_copy".to_string(), Tmp()).unwrap();
+        assert_eq!(ph.get_price("is_copy".to_string()).unwrap(), Tmp());
+    }
+
+    #[test]
+    fn price_holder_works_with_arbitrary_precision_decimal_type() {
+        let mut ph = ThreadUnsafe::new();
+        ph.put_price(
+            "pi".to_string(),
+            dec!(3.14159265358979323846264338327950288419716939937510),
+        )
+        .unwrap();
+        assert_eq!(
+            ph.get_price("pi".to_string()).unwrap(),
+            dec!(3.14159265358979323846264338327950288419716939937510)
+        );
     }
 
     #[test]

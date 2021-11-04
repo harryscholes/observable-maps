@@ -8,31 +8,36 @@ A threadsafe hashmap type that notifies waiters of state changes.
 use std::{thread, time::Duration};
 
 use priceholder::{PriceHolder, ThreadSafe};
+use rust_decimal_macros::dec;
 
 fn main() {
-    // `PriceHolder`s are generic and can store any types that are `Unsigned`.
-    let mut ph: ThreadSafe<u128> = ThreadSafe::new();
+    let pi = dec!(3.14159265358979323846264338327950288419716939937510);
+
+    // Types that are `PriceHolder` are generic, which allows them to store
+    // arbitrary precision decimal types, for example.
+    let mut ph = ThreadSafe::new();
 
     {
-        // `ThreadSafe` encapsulates an `Arc`, so the reference count is automatically
-        // increased when the price holder is cloned, making it threadsafe.
+        // `ThreadSafe` is made threadsafe by encapsulating an `Arc`, which
+        // automatically increases the reference count to the price holder
+        // when it is cloned.
         let mut ph = ph.clone();
+
         // Spawn a new thread ...
         thread::spawn(move || {
             // ... that waits for some time ...
             thread::sleep(Duration::from_secs(1));
             // ... then puts a new price in the price holder for BTC.
-            let price = 420;
-            ph.put_price("BTC".to_string(), price).unwrap();
-            println!("Put price: {}", price);
+            ph.put_price("BTC".to_string(), pi).unwrap();
+            println!("Put price: {}", pi);
         })
     };
 
-    // Create a waiter that waits for the price of BTC to be updated in the price
-    // holder, by blocking execution of the thread.
+    // Wait for the price of BTC to be updated in the price holder, by
+    // blocking execution of the thread.
     let price = ph.next_price("BTC".to_string()).unwrap();
-    println!("Received price: {}", price);
-    assert_eq!(price, 420);
+    println!("Received price: {}", pi);
+    assert_eq!(price, pi.clone());
 }
 ```
 
@@ -40,6 +45,6 @@ Outputs:
 
 ```sh
 $ cargo run --quiet main.rs
-Put price: 420
-Received price: 420
+Put price: 3.1415926535897932384626433833
+Received price: 3.1415926535897932384626433833
 ```
