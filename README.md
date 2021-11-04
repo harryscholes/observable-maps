@@ -10,18 +10,18 @@ use std::{thread, time::Duration};
 use priceholder::{PriceHolder, ThreadSafe};
 
 fn main() {
-    // The price holder is generic and can store any types that are `Unsigned`.
+    // `PriceHolder`s are generic and can store any types that are `Unsigned`.
     let mut ph: ThreadSafe<u128> = ThreadSafe::new();
 
     {
-        // Clone the Arc, which automatically increases the reference count for
-        // the price holder, making it threadsafe.
+        // `ThreadSafe` encapsulates an `Arc`, so the reference count is automatically
+        // increased when the price holder is cloned, making it threadsafe.
         let mut ph = ph.clone();
         // Spawn a new thread ...
         thread::spawn(move || {
             // ... that waits for some time ...
             thread::sleep(Duration::from_secs(1));
-            // ... then puts a new price in the price holder for 'symbol'.
+            // ... then puts a new price in the price holder for BTC.
             let price = 420;
             ph.put_price("BTC".to_string(), price).unwrap();
             println!("Put price: {}", price);
@@ -29,7 +29,7 @@ fn main() {
     };
 
     // Create a waiter that waits for the price of BTC to be updated in the price
-    // holder by blocking execution of the thread.
+    // holder, by blocking execution of the thread.
     let price = ph.next_price("BTC".to_string()).unwrap();
     println!("Received price: {}", price);
     assert_eq!(price, 420);
