@@ -293,30 +293,36 @@ mod tests {
         assert_eq!(price, 1);
     }
 
-    #[test]
-    fn get_price_whilst_waiting_for_next_price() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn get_price_multiple_times_whilst_waiting_for_next_price() {
         let mut ph = ThreadSafe::new();
 
         ph.put_price("symbol".to_string(), 1u64).unwrap();
 
         {
             let mut ph = ph.clone();
-            thread::spawn(move || {
+            tokio::spawn(async move {
                 let price = ph.next_price("symbol".to_string()).unwrap();
                 assert_eq!(price, 2);
             });
         }
 
-        let handle = {
-            let ph = ph.clone();
-            thread::spawn(move || {
-                for _ in 0..10 {
+        let mut handles = vec![];
+
+        {
+            for _ in 0..100_000 {
+                let ph = ph.clone();
+                let handle = tokio::spawn(async move {
                     let price = ph.get_price("symbol".to_string()).unwrap();
                     assert_eq!(price, 1);
-                }
-            })
-        };
-        handle.join().unwrap();
+                });
+                handles.push(handle);
+            }
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
 
         ph.put_price("symbol".to_string(), 2).unwrap();
     }
