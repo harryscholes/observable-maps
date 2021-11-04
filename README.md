@@ -27,8 +27,10 @@ fn main() {
         thread::spawn(move || {
             // ... that waits for some time ...
             thread::sleep(Duration::from_secs(1));
+            
             // ... then puts a new price in the price holder for BTC.
             ph.put_price("BTC".to_string(), pi).unwrap();
+            
             println!("Put price: {}", pi);
         })
     };
@@ -36,7 +38,9 @@ fn main() {
     // Wait for the price of BTC to be updated in the price holder, by
     // blocking execution of the thread.
     let price = ph.next_price("BTC".to_string()).unwrap();
+    
     println!("Received price: {}", pi);
+    
     assert_eq!(price, pi.clone());
 }
 ```
