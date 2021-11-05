@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{sync_channel, Receiver, RecvError, SendError, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 pub trait PriceHolder<T> {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>>;
@@ -67,13 +67,13 @@ impl<T> Default for ThreadUnsafe<T> {
 
 #[derive(Clone)]
 pub struct ThreadSafe<T> {
-    inner: Arc<Mutex<ThreadUnsafe<T>>>,
+    inner: Arc<RwLock<ThreadUnsafe<T>>>,
 }
 
 impl<T> ThreadSafe<T> {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(ThreadUnsafe::new())),
+            inner: Arc::new(RwLock::new(ThreadUnsafe::new())),
         }
     }
 }
@@ -83,15 +83,15 @@ where
     T: Clone,
 {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
-        self.inner.lock().unwrap().put_price(symbol, value)
+        self.inner.write().unwrap().put_price(symbol, value)
     }
 
     fn get_price(&self, symbol: String) -> Option<T> {
-        self.inner.lock().unwrap().get_price(symbol)
+        self.inner.read().unwrap().get_price(symbol)
     }
 
     fn next_price(&mut self, symbol: String) -> Result<T, RecvError> {
-        let rx = { self.inner.lock().unwrap().price_receiver(symbol) }; // unlock mutex
+        let rx = { self.inner.write().unwrap().price_receiver(symbol) }; // unlock mutex
         rx.recv()
     }
 }
@@ -356,7 +356,7 @@ mod tests {
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
                 ph.inner
-                    .lock()
+                    .write()
                     .unwrap()
                     .hashmap
                     .get_mut("symbol")
