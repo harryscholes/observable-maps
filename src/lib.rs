@@ -18,17 +18,24 @@ impl<T> ThreadUnsafe<T> {
             hashmap: HashMap::new(),
         }
     }
-}
 
-impl<T> Default for ThreadUnsafe<T> {
-    fn default() -> Self {
-        Self::new()
+    fn price_receiver(&mut self, symbol: String) -> Receiver<T> {
+        let (tx, rx) = sync_channel(1);
+        match self.hashmap.get_mut(&symbol) {
+            Some(price) => price.add_waiter(tx),
+            None => {
+                let mut p = Price::new();
+                p.add_waiter(tx);
+                self.hashmap.insert(symbol, p);
+            }
+        }
+        rx
     }
 }
 
 impl<T> PriceHolder<T> for ThreadUnsafe<T>
 where
-    T: Copy,
+    T: Clone,
 {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
         match self.hashmap.get_mut(&symbol) {
@@ -42,7 +49,7 @@ where
 
     fn get_price(&self, symbol: String) -> Option<T> {
         match self.hashmap.get(&symbol) {
-            Some(price) => price.value,
+            Some(price) => price.value.clone(),
             None => None,
         }
     }
@@ -52,21 +59,9 @@ where
     }
 }
 
-impl<T> ThreadUnsafe<T>
-where
-    T: Copy,
-{
-    fn price_receiver(&mut self, symbol: String) -> Receiver<T> {
-        let (tx, rx) = sync_channel(1);
-        match self.hashmap.get_mut(&symbol) {
-            Some(price) => price.add_waiter(tx),
-            None => {
-                let mut p = Price::new();
-                p.add_waiter(tx);
-                self.hashmap.insert(symbol, p);
-            }
-        }
-        rx
+impl<T> Default for ThreadUnsafe<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -83,15 +78,9 @@ impl<T> ThreadSafe<T> {
     }
 }
 
-impl<T> Default for ThreadSafe<T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl<T> PriceHolder<T> for ThreadSafe<T>
 where
-    T: Copy,
+    T: Clone,
 {
     fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
         self.inner.lock().unwrap().put_price(symbol, value)
@@ -107,15 +96,18 @@ where
     }
 }
 
+impl<T> Default for ThreadSafe<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 struct Price<T> {
     value: Option<T>,
     waiters: Option<Vec<SyncSender<T>>>,
 }
 
-impl<T> Price<T>
-where
-    T: Copy,
-{
+impl<T> Price<T> {
     fn new() -> Self {
         Self {
             value: None,
@@ -136,16 +128,21 @@ where
             None => self.waiters = Some(vec![waiter]),
         }
     }
+}
 
+impl<T> Price<T>
+where
+    T: Clone,
+{
     fn update_price(&mut self, value: T) -> Result<(), SendError<T>> {
-        self.value = Some(value);
+        self.value = Some(value.clone());
         self.notify_waiters(value)
     }
 
     fn notify_waiters(&mut self, value: T) -> Result<(), SendError<T>> {
         if let Some(waiters) = &self.waiters {
             for waiter in waiters {
-                waiter.send(value)?;
+                waiter.send(value.clone())?;
             }
             self.waiters = None;
         }
@@ -156,8 +153,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::{sync::mpsc::RecvError, thread, time::Duration};
 
+    use num::bigint::ToBigUint;
     use rust_decimal_macros::dec;
 
     #[test]
@@ -197,6 +196,17 @@ mod tests {
         assert_eq!(
             ph.get_price("pi".to_string()).unwrap(),
             dec!(3.14159265358979323846264338327950288419716939937510)
+        );
+    }
+
+    #[test]
+    fn price_holder_works_with_num_biguint_type() {
+        let mut ph = ThreadUnsafe::new();
+        ph.put_price("symbol".to_string(), 123.to_biguint())
+            .unwrap();
+        assert_eq!(
+            ph.get_price("symbol".to_string()).unwrap(),
+            123.to_biguint(),
         );
     }
 
