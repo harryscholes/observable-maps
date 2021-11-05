@@ -22,11 +22,11 @@ impl<T> ThreadUnsafe<T> {
     fn price_receiver(&mut self, symbol: String) -> Receiver<T> {
         let (tx, rx) = sync_channel(1);
         match self.hashmap.get_mut(&symbol) {
-            Some(price) => price.add_waiter(tx),
+            Some(price) => {
+                price.add_waiter(tx);
+            }
             None => {
-                let mut p = Price::new();
-                p.add_waiter(tx);
-                self.hashmap.insert(symbol, p);
+                self.hashmap.insert(symbol, Price::from_waiter(tx));
             }
         }
         rx
@@ -41,7 +41,7 @@ where
         match self.hashmap.get_mut(&symbol) {
             Some(price) => price.update_price(value),
             None => {
-                self.hashmap.insert(symbol, Price::from(value));
+                self.hashmap.insert(symbol, Price::new(value));
                 Ok(())
             }
         }
@@ -108,17 +108,17 @@ struct Price<T> {
 }
 
 impl<T> Price<T> {
-    fn new() -> Self {
+    fn new(value: T) -> Self {
         Self {
-            value: None,
+            value: Some(value),
             waiters: None,
         }
     }
 
-    fn from(value: T) -> Self {
+    fn from_waiter(waiter: SyncSender<T>) -> Self {
         Self {
-            value: Some(value),
-            waiters: None,
+            value: None,
+            waiters: Some(vec![waiter]),
         }
     }
 
