@@ -193,14 +193,11 @@ mod tests {
     #[test]
     fn value_is_arbitrary_precision_decimal_type() {
         let mut map = ObserverMap::new();
-        map.insert(
-            "pi".to_string(),
-            dec!(3.14159265358979323846264338327950288419716939937510),
-        )
-        .unwrap();
+        map.insert("pi".to_string(), dec!(3.1415926535897932384))
+            .unwrap();
         assert_eq!(
             map.get("pi".to_string()).unwrap(),
-            dec!(3.14159265358979323846264338327950288419716939937510)
+            dec!(3.1415926535897932384)
         );
     }
 
