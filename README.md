@@ -1,6 +1,6 @@
 # observable-maps
 
-Observable and thread-safe hash maps that notify observers of state changes.
+Thread-safe, generic, observable hash maps that notify observers of state changes.
 
 ### Usage
 

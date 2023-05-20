@@ -3,7 +3,7 @@ name = "observable-maps"
 version = "0.1.0"
 edition = "2021"
 authors = ["Harry Scholes <harryscholes@users.noreply.github.com>"]
-description = "Observable and thread-safe hash maps that notify observers of state changes."
+description = "Thread-safe, generic, observable hash maps that notify observers of state changes."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
