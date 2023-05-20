@@ -1,10 +1,3 @@
-# observable-maps
-
-Thread-safe, generic, observable hash maps that notify observers of state changes.
-
-### Usage
-
-```rust
 use std::{thread, time::Duration};
 
 use observable_maps::{ObservableMap, ThreadSafeObserverMap};
@@ -44,12 +37,3 @@ fn main() {
 
     assert_eq!(updated_value, value);
 }
-```
-
-Outputs:
-
-```sh
-$ cargo run --quiet main.rs
-Updated pi => 3.1415926535897932384
-Inserted pi => 3.1415926535897932384
-```

@@ -1,150 +1,155 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::mpsc::{sync_channel, Receiver, RecvError, SendError, SyncSender};
 use std::sync::{Arc, RwLock};
 
-pub trait PriceHolder<T> {
-    fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>>;
-    fn get_price(&self, symbol: String) -> Option<T>;
-    fn next_price(&mut self, symbol: String) -> Result<T, RecvError>;
+pub trait ObservableMap<K, V> {
+    fn insert(&mut self, key: K, value: V) -> Result<(), SendError<V>>;
+    fn get(&self, key: K) -> Option<V>;
+    fn observe(&mut self, key: K) -> Receiver<V>;
+    fn wait(&mut self, key: K) -> Result<V, RecvError>;
 }
 
-pub struct ThreadUnsafe<T> {
-    hashmap: HashMap<String, Price<T>>,
+pub struct ObserverMap<K, V> {
+    hashmap: HashMap<K, Item<V>>,
 }
 
-impl<T> ThreadUnsafe<T> {
+impl<K, V> ObserverMap<K, V> {
     pub fn new() -> Self {
         Self {
             hashmap: HashMap::new(),
         }
     }
-
-    fn price_receiver(&mut self, symbol: String) -> Receiver<T> {
-        let (tx, rx) = sync_channel(1);
-        match self.hashmap.get_mut(&symbol) {
-            Some(price) => {
-                price.add_waiter(tx);
-            }
-            None => {
-                self.hashmap.insert(symbol, Price::from_waiter(tx));
-            }
-        }
-        rx
-    }
 }
 
-impl<T> PriceHolder<T> for ThreadUnsafe<T>
+impl<K, V> ObservableMap<K, V> for ObserverMap<K, V>
 where
-    T: Clone,
+    K: Hash + Eq + PartialEq,
+    V: Clone,
 {
-    fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
-        match self.hashmap.get_mut(&symbol) {
-            Some(price) => price.update_price(value),
+    fn insert(&mut self, key: K, value: V) -> Result<(), SendError<V>> {
+        match self.hashmap.get_mut(&key) {
+            Some(item) => item.update(value),
             None => {
-                self.hashmap.insert(symbol, Price::new(value));
+                self.hashmap.insert(key, Item::new(value));
                 Ok(())
             }
         }
     }
 
-    fn get_price(&self, symbol: String) -> Option<T> {
-        match self.hashmap.get(&symbol) {
-            Some(price) => price.value.clone(),
+    fn get(&self, key: K) -> Option<V> {
+        match self.hashmap.get(&key) {
+            Some(item) => item.value.clone(),
             None => None,
         }
     }
 
-    fn next_price(&mut self, symbol: String) -> Result<T, RecvError> {
-        self.price_receiver(symbol).recv()
+    fn observe(&mut self, key: K) -> Receiver<V> {
+        let (tx, rx) = sync_channel(1);
+        match self.hashmap.get_mut(&key) {
+            Some(item) => {
+                item.add_observer(tx);
+            }
+            None => {
+                self.hashmap.insert(key, Item::from_observer(tx));
+            }
+        }
+        rx
+    }
+
+    fn wait(&mut self, key: K) -> Result<V, RecvError> {
+        self.observe(key).recv()
     }
 }
 
-impl<T> Default for ThreadUnsafe<T> {
+impl<K, V> Default for ObserverMap<K, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Clone)]
-pub struct ThreadSafe<T> {
-    inner: Arc<RwLock<ThreadUnsafe<T>>>,
+pub struct ThreadSafeObserverMap<K, V> {
+    inner: Arc<RwLock<ObserverMap<K, V>>>,
 }
 
-impl<T> ThreadSafe<T> {
+impl<K, V> ThreadSafeObserverMap<K, V> {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(ThreadUnsafe::new())),
+            inner: Arc::new(RwLock::new(ObserverMap::new())),
         }
     }
 }
 
-impl<T> PriceHolder<T> for ThreadSafe<T>
+impl<K, V> ObservableMap<K, V> for ThreadSafeObserverMap<K, V>
 where
-    T: Clone,
+    K: Hash + Eq + PartialEq,
+    V: Clone,
 {
-    fn put_price(&mut self, symbol: String, value: T) -> Result<(), SendError<T>> {
-        self.inner.write().unwrap().put_price(symbol, value)
+    fn insert(&mut self, key: K, value: V) -> Result<(), SendError<V>> {
+        self.inner.write().unwrap().insert(key, value)
     }
 
-    fn get_price(&self, symbol: String) -> Option<T> {
-        self.inner.read().unwrap().get_price(symbol)
+    fn get(&self, key: K) -> Option<V> {
+        self.inner.read().unwrap().get(key)
     }
 
-    fn next_price(&mut self, symbol: String) -> Result<T, RecvError> {
-        let rx = { self.inner.write().unwrap().price_receiver(symbol) }; // unlock mutex
-        rx.recv()
+    fn observe(&mut self, key: K) -> Receiver<V> {
+        self.inner.write().unwrap().observe(key)
+    }
+
+    fn wait(&mut self, key: K) -> Result<V, RecvError> {
+        self.observe(key).recv()
     }
 }
 
-impl<T> Default for ThreadSafe<T> {
+impl<K, V> Default for ThreadSafeObserverMap<K, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-struct Price<T> {
+struct Item<T> {
     value: Option<T>,
-    waiters: Option<Vec<SyncSender<T>>>,
+    observers: Option<Vec<SyncSender<T>>>,
 }
 
-impl<T> Price<T> {
-    fn new(value: T) -> Self {
-        Self {
-            value: Some(value),
-            waiters: None,
-        }
-    }
-
-    fn from_waiter(waiter: SyncSender<T>) -> Self {
-        Self {
-            value: None,
-            waiters: Some(vec![waiter]),
-        }
-    }
-
-    fn add_waiter(&mut self, waiter: SyncSender<T>) {
-        match &mut self.waiters {
-            Some(waiters) => waiters.push(waiter),
-            None => self.waiters = Some(vec![waiter]),
-        }
-    }
-}
-
-impl<T> Price<T>
+impl<T> Item<T>
 where
     T: Clone,
 {
-    fn update_price(&mut self, value: T) -> Result<(), SendError<T>> {
-        self.value = Some(value.clone());
-        self.notify_waiters(value)
+    fn new(value: T) -> Self {
+        Self {
+            value: Some(value),
+            observers: None,
+        }
     }
 
-    fn notify_waiters(&mut self, value: T) -> Result<(), SendError<T>> {
-        if let Some(waiters) = &self.waiters {
-            for waiter in waiters {
-                waiter.send(value.clone())?;
+    fn from_observer(observer: SyncSender<T>) -> Self {
+        Self {
+            value: None,
+            observers: Some(vec![observer]),
+        }
+    }
+
+    fn update(&mut self, value: T) -> Result<(), SendError<T>> {
+        self.value = Some(value.clone());
+        self.notify(value)
+    }
+
+    fn add_observer(&mut self, observer: SyncSender<T>) {
+        match &mut self.observers {
+            Some(observers) => observers.push(observer),
+            None => self.observers = Some(vec![observer]),
+        }
+    }
+
+    fn notify(&mut self, value: T) -> Result<(), SendError<T>> {
+        if let Some(observers) = &self.observers {
+            for observer in observers {
+                observer.send(value.clone())?;
             }
-            self.waiters = None;
+            self.observers = None;
         }
         Ok(())
     }
@@ -160,107 +165,97 @@ mod tests {
     use rust_decimal_macros::dec;
 
     #[test]
-    fn put_and_get_price() {
-        let mut ph = ThreadUnsafe::new();
+    fn insert_and_get() {
+        let mut map = ObserverMap::new();
 
-        ph.put_price("symbol".to_string(), 1u32).unwrap();
-        assert_eq!(ph.get_price("symbol".to_string()).unwrap(), 1);
+        map.insert("key".to_string(), 1u32).unwrap();
+        assert_eq!(map.get("key".to_string()).unwrap(), 1);
 
-        ph.put_price("symbol".to_string(), 2).unwrap();
-        assert_eq!(ph.get_price("symbol".to_string()).unwrap(), 2);
+        map.insert("key".to_string(), 2).unwrap();
+        assert_eq!(map.get("key".to_string()).unwrap(), 2);
 
-        ph.put_price("another_symbol".to_string(), 3).unwrap();
-        assert_eq!(ph.get_price("another_symbol".to_string()).unwrap(), 3);
+        map.insert("another_key".to_string(), 3).unwrap();
+        assert_eq!(map.get("another_key".to_string()).unwrap(), 3);
 
-        assert!(ph.get_price("not_a_symbol".to_string()).is_none());
+        assert!(map.get("not_a_key".to_string()).is_none());
     }
 
     #[test]
-    fn price_holder_works_with_arbitrary_structs_that_are_copy() {
+    fn value_is_arbitrary_structs_that_are_copy() {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         struct Tmp();
 
-        let mut ph = ThreadUnsafe::new();
-        ph.put_price("is_copy".to_string(), Tmp()).unwrap();
-        assert_eq!(ph.get_price("is_copy".to_string()).unwrap(), Tmp());
+        let mut map = ObserverMap::new();
+        map.insert("is_copy".to_string(), Tmp()).unwrap();
+        assert_eq!(map.get("is_copy".to_string()).unwrap(), Tmp());
     }
 
     #[test]
-    fn price_holder_works_with_arbitrary_precision_decimal_type() {
-        let mut ph = ThreadUnsafe::new();
-        ph.put_price(
-            "pi".to_string(),
-            dec!(3.14159265358979323846264338327950288419716939937510),
-        )
-        .unwrap();
-        assert_eq!(
-            ph.get_price("pi".to_string()).unwrap(),
-            dec!(3.14159265358979323846264338327950288419716939937510)
-        );
-    }
-
-    #[test]
-    fn price_holder_works_with_num_biguint_type() {
-        let mut ph = ThreadUnsafe::new();
-        ph.put_price("symbol".to_string(), 123.to_biguint())
+    fn value_is_arbitrary_precision_decimal_type() {
+        let mut map = ObserverMap::new();
+        map.insert("pi".to_string(), dec!(3.1415926535897932384))
             .unwrap();
         assert_eq!(
-            ph.get_price("symbol".to_string()).unwrap(),
-            123.to_biguint(),
+            map.get("pi".to_string()).unwrap(),
+            dec!(3.1415926535897932384)
         );
     }
 
     #[test]
-    fn next_price() {
-        let mut ph = ThreadSafe::new();
-
-        ph.put_price("symbol".to_string(), 1u64).unwrap();
-
-        {
-            let mut ph = ph.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(100));
-                ph.put_price("symbol".to_string(), 2).unwrap();
-            })
-        };
-
-        let price = ph.next_price("symbol".to_string()).unwrap();
-        assert_eq!(price, 2);
+    fn value_is_num_biguint_type() {
+        let mut map = ObserverMap::new();
+        map.insert("key".to_string(), 123.to_biguint()).unwrap();
+        assert_eq!(map.get("key".to_string()).unwrap(), 123.to_biguint(),);
     }
 
     #[test]
-    fn wait_for_price_of_new_symbol() {
-        let mut ph = ThreadSafe::new();
+    fn thread_safe_wait_for_next_value() {
+        let mut map = ThreadSafeObserverMap::new();
+
+        map.insert("key".to_string(), 1u64).unwrap();
 
         {
-            let mut ph = ph.clone();
+            let mut map = map.clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
-                ph.put_price("symbol".to_string(), 2u64).unwrap();
+                map.insert("key".to_string(), 2).unwrap();
             })
         };
 
-        let price = ph.next_price("symbol".to_string()).unwrap();
-        assert_eq!(price, 2);
+        assert_eq!(map.wait("key".to_string()).unwrap(), 2);
     }
 
     #[test]
-    fn multiple_wait_for_next_price() {
-        let mut ph = ThreadSafe::new();
+    fn wait_for_value_of_new_key() {
+        let mut map = ThreadSafeObserverMap::new();
+
+        {
+            let mut map = map.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(100));
+                map.insert("key".to_string(), 2u64).unwrap();
+            })
+        };
+
+        assert_eq!(map.wait("key".to_string()).unwrap(), 2);
+    }
+
+    #[test]
+    fn multiple_observers() {
+        let mut map = ThreadSafeObserverMap::new();
 
         let mut handles = vec![];
 
         for _ in 1..=4 {
-            let mut ph = ph.clone();
+            let mut map = map.clone();
             let handle = thread::spawn(move || {
-                let price = ph.next_price("symbol".to_string()).unwrap();
-                assert_eq!(price, 1);
+                assert_eq!(map.wait("key".to_string()).unwrap(), 1);
             });
             handles.push(handle);
         }
 
         thread::sleep(Duration::from_millis(100));
-        ph.put_price("symbol".to_string(), 1u8).unwrap();
+        map.insert("key".to_string(), 1u8).unwrap();
 
         for handle in handles {
             handle.join().unwrap();
@@ -268,52 +263,49 @@ mod tests {
     }
 
     #[test]
-    fn wait_for_next_price_multiple_times() {
-        let mut ph = ThreadSafe::new();
+    fn wait_for_next_value_multiple_times() {
+        let mut map = ThreadSafeObserverMap::new();
 
-        for p in 1u64..=4 {
+        for v in 1u64..=4 {
             {
-                let mut ph = ph.clone();
+                let mut map = map.clone();
                 thread::spawn(move || {
                     thread::sleep(Duration::from_millis(100));
-                    ph.put_price("symbol".to_string(), p).unwrap();
+                    map.insert("key".to_string(), v).unwrap();
                 })
             };
 
-            let price = ph.next_price("symbol".to_string()).unwrap();
-            assert_eq!(price, p);
+            assert_eq!(map.wait("key".to_string()).unwrap(), v);
         }
     }
 
     #[test]
-    fn next_price_is_the_same() {
-        let mut ph = ThreadSafe::new();
+    fn next_value_is_the_same_as_current_value() {
+        let mut map = ThreadSafeObserverMap::new();
 
-        ph.put_price("symbol".to_string(), 1u32).unwrap();
+        map.insert("key".to_string(), 1u32).unwrap();
 
         {
-            let mut ph = ph.clone();
+            let mut map = map.clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(100));
-                ph.put_price("symbol".to_string(), 1).unwrap();
+                map.insert("key".to_string(), 1).unwrap();
             })
         };
 
-        let price = ph.next_price("symbol".to_string()).unwrap();
-        assert_eq!(price, 1);
+        assert_eq!(map.wait("key".to_string()).unwrap(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn get_price_multiple_times_whilst_waiting_for_next_price() {
-        let mut ph = ThreadSafe::new();
+    async fn get_value_multiple_times_whilst_waiting_for_next_value() {
+        let mut map = ThreadSafeObserverMap::new();
 
-        ph.put_price("symbol".to_string(), 1u64).unwrap();
+        map.insert("key".to_string(), 1u64).unwrap();
 
         {
-            let mut ph = ph.clone();
+            let mut map = map.clone();
             tokio::spawn(async move {
-                let price = ph.next_price("symbol".to_string()).unwrap();
-                assert_eq!(price, 2);
+                assert_eq!(map.wait("key".to_string()).unwrap(), 2);
             });
         }
 
@@ -321,10 +313,9 @@ mod tests {
 
         {
             for _ in 0..100_000 {
-                let ph = ph.clone();
+                let map = map.clone();
                 let handle = tokio::spawn(async move {
-                    let price = ph.get_price("symbol".to_string()).unwrap();
-                    assert_eq!(price, 1);
+                    assert_eq!(map.get("key".to_string()).unwrap(), 1);
                 });
                 handles.push(handle);
             }
@@ -334,37 +325,36 @@ mod tests {
             handle.await.unwrap();
         }
 
-        ph.put_price("symbol".to_string(), 2).unwrap();
+        map.insert("key".to_string(), 2).unwrap();
     }
 
     #[test]
-    fn test_thread_unsafe_channel_closed() {
-        let mut ph: ThreadUnsafe<u64> = ThreadUnsafe::new();
+    fn thread_unsafe_channel_closed() {
+        let mut map: ObserverMap<String, u32> = ObserverMap::new();
 
-        let rx = ph.price_receiver("symbol".to_string());
+        let rx = map.observe("key".to_string());
 
-        ph.hashmap.get_mut("symbol").unwrap().waiters = None;
+        // Close the channel
+        map.hashmap.get_mut("key").unwrap().observers = None;
+
         assert_eq!(rx.recv().unwrap_err(), RecvError);
     }
 
     #[test]
-    fn test_thread_safe_channel_closed() {
-        let mut ph: ThreadSafe<u64> = ThreadSafe::new();
+    fn thread_safe_channel_closed() {
+        let mut map: ThreadSafeObserverMap<String, u64> = ThreadSafeObserverMap::new();
 
-        {
-            let ph = ph.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(100));
-                ph.inner
-                    .write()
-                    .unwrap()
-                    .hashmap
-                    .get_mut("symbol")
-                    .unwrap()
-                    .waiters = None;
-            });
-        }
+        let rx = map.observe("key".to_string());
 
-        assert_eq!(ph.next_price("symbol".to_string()).unwrap_err(), RecvError)
+        // Close the channel
+        map.inner
+            .write()
+            .unwrap()
+            .hashmap
+            .get_mut("key")
+            .unwrap()
+            .observers = None;
+
+        assert_eq!(rx.recv().unwrap_err(), RecvError);
     }
 }
