@@ -1,9 +1,9 @@
 [package]
-name = "priceholder"
+name = "observable-maps"
 version = "0.1.0"
 edition = "2021"
 authors = ["Harry Scholes <harryscholes@users.noreply.github.com>"]
-description = "A threadsafe hashmap type that notifies waiters of state changes"
+description = "Observable and thread-safe hash maps that notify observers of state changes."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
